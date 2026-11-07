@@ -1,11 +1,15 @@
 // ==UserScript==
 // @name         PoE Faustus Auto-Travel (Live Search)
 // @namespace    https://github.com/DaniiilPA/faustusbuyer
-// @version      1.3
+// @version      1.4
 // @description  Автоматически кликает 'Travel to Hideout' ТОЛЬКО для новых лотов в Live Search с передачей имени лота в буфер для плагина
 // @author       Antigravity
+// @match        https://pathofexile.com/trade*
 // @match        https://www.pathofexile.com/trade*
+// @match        https://ru.pathofexile.com/trade*
+// @match        https://pathofexile.com/trade2*
 // @match        https://www.pathofexile.com/trade2*
+// @match        https://ru.pathofexile.com/trade2*
 // @grant        GM_setClipboard
 // ==/UserScript==
 
@@ -186,12 +190,17 @@
         setTimeout(() => {
             markExistingButtonsAsSeen();
 
+            let throttleTimer = null;
             const observer = new MutationObserver(() => {
-                processNewResults();
+                if (throttleTimer) return;
+                throttleTimer = setTimeout(() => {
+                    throttleTimer = null;
+                    processNewResults();
+                }, 40);
             });
 
             observer.observe(document.body, { childList: true, subtree: true });
-            console.log('[FaustusAutoBuyer] v1.3: Слушатель Live Search готов к работе!');
+            console.log('[FaustusAutoBuyer] v1.4: Слушатель Live Search готов к работе!');
         }, 1200);
     });
 })();

@@ -6,8 +6,13 @@ using ExileCore;
 using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Components;
 using ExileCore.PoEMemory.Elements;
+using ExileCore.PoEMemory.Elements.InventoryElements;
+using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.Shared.Enums;
 using SharpDX;
+using RectangleF = SharpDX.RectangleF;
+using Color = SharpDX.Color;
+using Vector2 = System.Numerics.Vector2;
 
 namespace faustusbuyer
 {
@@ -24,7 +29,7 @@ namespace faustusbuyer
 
     public class FaustusBuyerPlugin : BaseSettingsPlugin<PluginSettings>
     {
-        private InputController _input;
+        private InputController _input = null!;
         private BuyerState _state = BuyerState.Idle;
         private string _status = "Инициализация";
         private uint _homeAreaHash = 0;
@@ -38,7 +43,7 @@ namespace faustusbuyer
         private bool _hasPurchased = false;
         private string _expectedTargetName = string.Empty;
 
-        // Кэшированные задержки (фиксируются при входе в состояние, а не каждый кадр)
+        // Кэшированные задержки (фиксируются при входе в состояние)
         private int _cachedLoadJitterMs = 200;
         private int _cachedReturnDelayMs = 400;
         private int _cachedSubDelayMs = 80;
@@ -83,17 +88,17 @@ namespace faustusbuyer
 
             if (area.Hash != _homeAreaHash)
             {
-                // Загрузились в чужое убежище
+                // Загрузились в чужую зону (убежище продавца)
                 _state = BuyerState.WaitingForZoneLoad;
                 _failsafeTimer.Restart();
                 _hasPurchased = false;
-                _cachedLoadJitterMs = _random.Next(150, 280); // фиксируем один раз
+                _cachedLoadJitterMs = _random.Next(150, 280);
 
                 // Считываем целевое имя из буфера обмена (если передал скрипт браузера)
                 _expectedTargetName = ResolveExpectedTargetName();
 
                 _status = string.IsNullOrEmpty(_expectedTargetName)
-                    ? "Прибыли в чужое убежище. Ожидание витрины..."
+                    ? "Прибыли в зону продавца. Ожидание витрины..."
                     : $"Прибыли за: '{_expectedTargetName}'. Ожидание витрины...";
             }
             else
@@ -167,7 +172,7 @@ namespace faustusbuyer
                     break;
 
                 case BuyerState.WaitingForZoneLoad:
-                    // Небольшая пауза после загрузки для стабилизации UI (задержка зафиксирована при входе в состояние)
+                    // Небольшая пауза после загрузки для стабилизации UI
                     if (_stateTimer.ElapsedMilliseconds > _cachedLoadJitterMs)
                     {
                         _state = BuyerState.WaitingForShopOpen;
@@ -231,7 +236,7 @@ namespace faustusbuyer
                     break;
 
                 case BuyerState.CheckingConfirmationPopup:
-                    // Ждем 150-350 мс на случай модального окна "Confirm"
+                    // Ждем модального окна "Confirm"
                     var confirmBtn = FindConfirmationButton();
                     if (confirmBtn != null)
                     {
@@ -245,7 +250,9 @@ namespace faustusbuyer
 
                     if (_stateTimer.ElapsedMilliseconds > 350)
                     {
-                        _status = "Покупка завершена! Закрываем окно и летим домой...";
+                        _status = _hasPurchased 
+                            ? "Покупка завершена! Закрываем окно и летим домой..."
+                            : "Возврат домой...";
                         InitiateReturnHome();
                     }
                     break;
@@ -301,9 +308,6 @@ namespace faustusbuyer
             }
         }
 
-        /// <summary>
-        /// Инициализация возврата домой: выставляет состояние и кэширует задержку один раз.
-        /// </summary>
         private void InitiateReturnHome()
         {
             _state = BuyerState.ReturningHome;
@@ -332,29 +336,30 @@ namespace faustusbuyer
             return string.Empty;
         }
 
-        private Element FindShopWindow()
+        private Element? FindShopWindow()
         {
             var ingameUi = GameController.IngameState?.IngameUi;
             if (ingameUi == null) return null;
 
-            // 1. Стандартная вкладка Stash / Merchant
+            // 1. Панель офлайн-торговца / витрины Фостуса (OfflineMerchantPanel)
+            if (ingameUi.OfflineMerchantPanel != null && ingameUi.OfflineMerchantPanel.IsVisible)
+            {
+                return ingameUi.OfflineMerchantPanel;
+            }
+
+            // 2. Окно покупки у торговца (PurchaseWindow)
+            if (ingameUi.PurchaseWindow != null && ingameUi.PurchaseWindow.IsVisible)
+            {
+                return ingameUi.PurchaseWindow;
+            }
+
+            // 3. Стандартная вкладка Stash / Merchant
             if (ingameUi.StashElement != null && ingameUi.StashElement.IsVisible)
             {
                 return ingameUi.StashElement;
             }
 
-            // 2. Окно покупки в убежище (PurchaseWindowHideout) — может отсутствовать в некоторых версиях ExileCore
-            try
-            {
-                var purchaseWindow = ingameUi.PurchaseWindowHideout;
-                if (purchaseWindow != null && purchaseWindow.IsVisible)
-                {
-                    return purchaseWindow;
-                }
-            }
-            catch { /* Свойство не найдено — пропускаем */ }
-
-            // 3. Fallback: поиск крупного левого окна в UI
+            // 4. Fallback: поиск крупного левого окна в UI
             var windowRect = GameController.Window.GetWindowRectangle();
             if (ingameUi.Children != null)
             {
@@ -374,7 +379,7 @@ namespace faustusbuyer
             return null;
         }
 
-        private Element FindMatchingItem(Element shopWindow, string expectedName)
+        private Element? FindMatchingItem(Element shopWindow, string expectedName)
         {
             if (shopWindow == null) return null;
 
@@ -393,15 +398,14 @@ namespace faustusbuyer
                         }
                     }
 
-                    // Если целевое имя задано, но пока не найдено в загрузившихся вещах:
-                    // НЕ покупаем чужие случайные предметы! Ждем загрузки или таймаута
+                    // Если целевое имя задано, но пока не найдено — ждем загрузки или таймаута
                     return null;
                 }
 
-                // 2. Поиск по рамке подсветки игры (когда имя не задано или проверка имени выключена)
+                // 2. Поиск по нативной подсветке игры (когда имя не задано или проверка выключена)
                 foreach (var invItem in items)
                 {
-                    if (invItem != null && invItem.IsVisible && HasHighlightBorder(invItem))
+                    if (invItem != null && invItem.IsVisible && HasHighlight(invItem))
                     {
                         return invItem;
                     }
@@ -428,11 +432,12 @@ namespace faustusbuyer
             var list = new System.Collections.Generic.List<NormalInventoryItem>();
             if (shopWindow == null) return list;
 
-            // 1. Если открыт StashElement с загруженной вкладкой
-            var stashElement = GameController.IngameState?.IngameUi?.StashElement;
-            if (stashElement != null && stashElement.IsVisible && stashElement.VisibleStash != null)
+            var ingameUi = GameController.IngameState?.IngameUi;
+
+            // 1. OfflineMerchantPanel
+            if (ingameUi?.OfflineMerchantPanel != null && ingameUi.OfflineMerchantPanel.IsVisible)
             {
-                var stashItems = stashElement.VisibleStash.VisibleInventoryItems;
+                var stashItems = ingameUi.OfflineMerchantPanel.VisibleStash?.VisibleInventoryItems;
                 if (stashItems != null && stashItems.Count > 0)
                 {
                     list.AddRange(stashItems);
@@ -440,7 +445,29 @@ namespace faustusbuyer
                 }
             }
 
-            // 2. Рекурсивный сбор элементов NormalInventoryItem из окна
+            // 2. PurchaseWindow
+            if (ingameUi?.PurchaseWindow != null && ingameUi.PurchaseWindow.IsVisible)
+            {
+                var purchaseItems = ingameUi.PurchaseWindow.TabContainer?.VisibleStash?.VisibleInventoryItems;
+                if (purchaseItems != null && purchaseItems.Count > 0)
+                {
+                    list.AddRange(purchaseItems);
+                    return list;
+                }
+            }
+
+            // 3. StashElement
+            if (ingameUi?.StashElement != null && ingameUi.StashElement.IsVisible)
+            {
+                var stashItems = ingameUi.StashElement.VisibleStash?.VisibleInventoryItems;
+                if (stashItems != null && stashItems.Count > 0)
+                {
+                    list.AddRange(stashItems);
+                    return list;
+                }
+            }
+
+            // 4. Рекурсивный сбор элементов NormalInventoryItem из окна
             CollectInventoryItemsRecursive(shopWindow, list, 0);
             return list;
         }
@@ -470,14 +497,14 @@ namespace faustusbuyer
 
             var modsComp = itemEntity.GetComponent<Mods>();
             var baseComp = itemEntity.GetComponent<Base>();
-            string uniqueName = modsComp?.UniqueName?.Trim();
-            string itemName = modsComp?.ItemName?.Trim();
-            string baseName = baseComp?.Name?.Trim();
-            string path = itemEntity.Path ?? "";
+            string uniqueName = modsComp?.UniqueName?.Trim() ?? string.Empty;
+            string renderName = itemEntity.RenderName?.Trim() ?? string.Empty;
+            string baseName = baseComp?.Name?.Trim() ?? string.Empty;
+            string path = itemEntity.Path ?? string.Empty;
 
             expectedName = expectedName.Trim();
 
-            // 1. Двусторонняя проверка уникального названия (например "Headhunter" <-> "Headhunter Leather Belt")
+            // 1. Проверка уникального названия (например "Headhunter" <-> "Headhunter Leather Belt")
             if (!string.IsNullOrEmpty(uniqueName))
             {
                 if (uniqueName.IndexOf(expectedName, StringComparison.OrdinalIgnoreCase) >= 0 ||
@@ -487,11 +514,11 @@ namespace faustusbuyer
                 }
             }
 
-            // 2. Проверка имени редкого предмета (например "Dire Roar")
-            if (!string.IsNullOrEmpty(itemName))
+            // 2. Проверка RenderName
+            if (!string.IsNullOrEmpty(renderName))
             {
-                if (itemName.IndexOf(expectedName, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    expectedName.IndexOf(itemName, StringComparison.OrdinalIgnoreCase) >= 0)
+                if (renderName.IndexOf(expectedName, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    expectedName.IndexOf(renderName, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     return true;
                 }
@@ -520,32 +547,43 @@ namespace faustusbuyer
             return false;
         }
 
-        private bool HasHighlightBorder(Element itemElement)
+        private bool HasHighlight(NormalInventoryItem invItem)
         {
-            if (itemElement == null || itemElement.Children == null || itemElement.Children.Count == 0)
-                return false;
+            if (invItem == null) return false;
 
-            var itemRect = itemElement.GetClientRect();
-            foreach (var child in itemElement.Children)
+            // 1. Нативные флаги подсветки ExileCore
+            if (invItem.isHighlighted || invItem.HasShinyHighlight)
+                return true;
+
+            // 2. Проверка дочерних элементов
+            if (invItem.Children != null && invItem.Children.Count > 0)
             {
-                if (child != null && child.IsVisible)
+                var itemRect = invItem.GetClientRect();
+                foreach (var child in invItem.Children)
                 {
-                    var childRect = child.GetClientRect();
-                    if (Math.Abs(childRect.Width - itemRect.Width) <= 18 && 
-                        Math.Abs(childRect.Height - itemRect.Height) <= 18)
+                    if (child != null && child.IsVisible)
                     {
-                        return true;
+                        if (child.isHighlighted || child.HasShinyHighlight)
+                            return true;
+
+                        var childRect = child.GetClientRect();
+                        if (Math.Abs(childRect.Width - itemRect.Width) <= 18 && 
+                            Math.Abs(childRect.Height - itemRect.Height) <= 18)
+                        {
+                            return true;
+                        }
                     }
                 }
             }
+
             return false;
         }
 
-        private Element FindHighlightedChildRecursive(Element root, int depth)
+        private Element? FindHighlightedChildRecursive(Element root, int depth)
         {
             if (root == null || !root.IsVisible || depth > 5) return null;
 
-            if (HasHighlightBorder(root))
+            if (root.isHighlighted || root.HasShinyHighlight)
             {
                 return root;
             }
@@ -562,7 +600,7 @@ namespace faustusbuyer
             return null;
         }
 
-        private Element FindConfirmationButton()
+        private Element? FindConfirmationButton()
         {
             var ingameUi = GameController.IngameState?.IngameUi;
             if (ingameUi == null) return null;
@@ -571,11 +609,11 @@ namespace faustusbuyer
             return FindButtonWithTextRecursive(ingameUi, confirmKeywords, 0);
         }
 
-        private Element FindButtonWithTextRecursive(Element root, string[] keywords, int depth)
+        private Element? FindButtonWithTextRecursive(Element root, string[] keywords, int depth)
         {
             if (root == null || !root.IsVisible || depth > 5) return null;
 
-            string text = (root.Text ?? "").Trim();
+            string text = (root.Text ?? string.Empty).Trim();
             if (!string.IsNullOrEmpty(text))
             {
                 string lower = text.ToLowerInvariant();
@@ -610,7 +648,7 @@ namespace faustusbuyer
 
             string targetInfo = string.IsNullOrEmpty(_expectedTargetName) ? "Любой подсвеченный" : _expectedTargetName;
             string text = $"[FaustusBuyer] Состояние: {_state} | Цель: [{targetInfo}] | {_status}";
-            Graphics.DrawText(text, drawPos, textColor);
+            Graphics.DrawText(text, drawPos, textColor, FontAlign.Left);
 
             if (_targetClickPos != Vector2.Zero && _state == BuyerState.BuyingItem)
             {

@@ -7,8 +7,8 @@ namespace faustusbuyer
     public class PluginSettings : ISettings
     {
         public ToggleNode Enable { get; set; } = new ToggleNode(false);
-        public HotkeyNode ToggleHotkey { get; set; } = new HotkeyNode(Keys.F5);
-        public HotkeyNode SetHomeHotkey { get; set; } = new HotkeyNode(Keys.F6); // Запомнить текущую зону как родной Hideout
+        public HotkeyNodeV2 ToggleHotkey { get; set; } = new HotkeyNodeV2(Keys.F5);
+        public HotkeyNodeV2 SetHomeHotkey { get; set; } = new HotkeyNodeV2(Keys.F6); // Запомнить текущую зону как родной Hideout
 
         // --- ВЕРИФИКАЦИЯ ПРЕДМЕТА (ЗАЩИТА ОТ ПОДМЕНЫ / СКАМА) ---
         public ToggleNode VerifyTargetName { get; set; } = new ToggleNode(true);

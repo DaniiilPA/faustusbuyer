@@ -1,9 +1,11 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 using ExileCore;
 using SharpDX;
+using Vector2 = System.Numerics.Vector2;
 
 namespace faustusbuyer
 {
@@ -74,8 +76,8 @@ namespace faustusbuyer
         public InputController(GameController gameController)
         {
             _gameController = gameController ?? throw new ArgumentNullException(nameof(gameController));
-            _screenWidth = Screen.PrimaryScreen.Bounds.Width;
-            _screenHeight = Screen.PrimaryScreen.Bounds.Height;
+            _screenWidth = Screen.PrimaryScreen?.Bounds.Width ?? 1920;
+            _screenHeight = Screen.PrimaryScreen?.Bounds.Height ?? 1080;
         }
 
         /// <summary>
@@ -107,7 +109,7 @@ namespace faustusbuyer
                         SetForegroundWindow(handle);
                     }
 
-                    System.Threading.Thread.Sleep(50);
+                    Thread.Sleep(50);
                     return _gameController.Window.IsForeground();
                 }
             }
@@ -132,7 +134,7 @@ namespace faustusbuyer
             int targetX = (int)(windowRect.X + screenRelativePos.X + jitterX);
             int targetY = (int)(windowRect.Y + screenRelativePos.Y + jitterY);
 
-            // Прямая установка аппаратного курсора по точным экранным пикселям (работает на любых мониторах и DPI)
+            // Прямая установка аппаратного курсора по точным экранным пикселям
             SetCursorPos(targetX, targetY);
             return true;
         }
@@ -142,13 +144,13 @@ namespace faustusbuyer
             if (!MoveMouse(screenRelativePos))
                 return false;
 
-            // Небольшая задержка после наведения мыши (имитация наведения человека)
-            System.Threading.Thread.Sleep(_random.Next(40, 75));
+            // Небольшая задержка после наведения мыши (имитация человека)
+            Thread.Sleep(_random.Next(40, 75));
 
             if (ctrlClick)
             {
                 KeyDown(Keys.ControlKey);
-                System.Threading.Thread.Sleep(_random.Next(25, 45));
+                Thread.Sleep(_random.Next(25, 45));
             }
 
             INPUT[] clickDown = {
@@ -156,7 +158,7 @@ namespace faustusbuyer
             };
             SendInput((uint)clickDown.Length, clickDown, Marshal.SizeOf(typeof(INPUT)));
 
-            System.Threading.Thread.Sleep(_random.Next(35, 65));
+            Thread.Sleep(_random.Next(35, 65));
 
             INPUT[] clickUp = {
                 new INPUT { type = INPUT_MOUSE, mi = new MOUSEINPUT { dwFlags = MOUSEEVENTF_LEFTUP } }
@@ -165,7 +167,7 @@ namespace faustusbuyer
 
             if (ctrlClick)
             {
-                System.Threading.Thread.Sleep(_random.Next(25, 45));
+                Thread.Sleep(_random.Next(25, 45));
                 KeyUp(Keys.ControlKey);
             }
 
@@ -197,7 +199,7 @@ namespace faustusbuyer
         public void KeyPress(Keys key)
         {
             KeyDown(key);
-            System.Threading.Thread.Sleep(_random.Next(25, 50));
+            Thread.Sleep(_random.Next(25, 50));
             KeyUp(key);
         }
 
@@ -211,24 +213,24 @@ namespace faustusbuyer
             {
                 try
                 {
-                    Clipboard.SetText(command);
+                    RunInSta(() => Clipboard.SetText(command));
                     break;
                 }
                 catch
                 {
-                    System.Threading.Thread.Sleep(20);
+                    Thread.Sleep(20);
                 }
             }
 
             // 1. Открыть чат (Enter)
             KeyPress(Keys.Return);
-            System.Threading.Thread.Sleep(_random.Next(45, 75));
+            Thread.Sleep(_random.Next(45, 75));
 
             // 2. Вставить команду (Ctrl + V)
             KeyDown(Keys.ControlKey);
             KeyPress(Keys.V);
             KeyUp(Keys.ControlKey);
-            System.Threading.Thread.Sleep(_random.Next(35, 65));
+            Thread.Sleep(_random.Next(35, 65));
 
             // 3. Отправить (Enter)
             KeyPress(Keys.Return);
@@ -243,22 +245,31 @@ namespace faustusbuyer
 
         public string ReadClipboardText()
         {
+            string result = string.Empty;
             for (int i = 0; i < 3; i++)
             {
                 try
                 {
-                    if (Clipboard.ContainsText())
+                    RunInSta(() =>
                     {
-                        return Clipboard.GetText();
+                        if (Clipboard.ContainsText())
+                        {
+                            result = Clipboard.GetText();
+                        }
+                    });
+
+                    if (!string.IsNullOrEmpty(result))
+                    {
+                        return result;
                     }
                     break;
                 }
                 catch
                 {
-                    System.Threading.Thread.Sleep(20);
+                    Thread.Sleep(20);
                 }
             }
-            return string.Empty;
+            return result;
         }
 
         public void ClearClipboard()
@@ -267,14 +278,42 @@ namespace faustusbuyer
             {
                 try
                 {
-                    Clipboard.Clear();
+                    RunInSta(() => Clipboard.Clear());
                     break;
                 }
                 catch
                 {
-                    System.Threading.Thread.Sleep(20);
+                    Thread.Sleep(20);
                 }
             }
+        }
+
+        private static void RunInSta(Action action)
+        {
+            if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+            {
+                action();
+                return;
+            }
+
+            Exception? caught = null;
+            var staThread = new Thread(() =>
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    caught = ex;
+                }
+            });
+            staThread.SetApartmentState(ApartmentState.STA);
+            staThread.Start();
+            staThread.Join(500);
+
+            if (caught != null)
+                throw caught;
         }
 
         [DllImport("user32.dll", SetLastError = true)]
