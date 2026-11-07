@@ -1,20 +1,21 @@
 // ==UserScript==
 // @name         PoE Faustus Auto-Travel (Live Search)
 // @namespace    https://github.com/DaniiilPA/faustusbuyer
-// @version      1.4
-// @description  Автоматически кликает 'Travel to Hideout' ТОЛЬКО для новых лотов в Live Search с передачей имени лота в буфер для плагина
+// @version      1.5
+// @description  Автоматически кликает 'Travel to Hideout' ТОЛЬКО для новых лотов в Live Search с передачей цели в плагин
 // @author       Antigravity
-// @match        https://pathofexile.com/trade*
-// @match        https://www.pathofexile.com/trade*
-// @match        https://ru.pathofexile.com/trade*
-// @match        https://pathofexile.com/trade2*
-// @match        https://www.pathofexile.com/trade2*
-// @match        https://ru.pathofexile.com/trade2*
+// @match        *://*.pathofexile.com/trade*
+// @match        *://*.pathofexile.com/trade2*
+// @match        *://pathofexile.com/trade*
+// @match        *://pathofexile.com/trade2*
+// @run-at       document-idle
 // @grant        GM_setClipboard
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    console.log('[FaustusAutoBuyer] Скрипт загружен на странице trade');
 
     let isEnabled = true;
     let isTraveling = false; // Блокировка от повторных кликов, пока идет телепорт
@@ -42,7 +43,7 @@
         const buttons = document.querySelectorAll('button, a.btn');
         let count = 0;
         buttons.forEach(btn => {
-            const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+            const text = (btn.innerText || btn.textContent || '').trim();
             if (isTravelButtonText(text, btn)) {
                 btn.dataset.autoClicked = 'true';
                 count++;
@@ -58,32 +59,34 @@
                lower.includes('travel') ||
                lower.includes('отправиться в убежище') ||
                lower.includes('убежище') ||
-               btn.classList.contains('btn-travel') ||
+               (btn.classList && btn.classList.contains('btn-travel')) ||
                btn.getAttribute('data-action') === 'travel';
     }
 
     // Плавающий виджет управления
     function createFloatingToggle() {
+        if (document.getElementById('faustus-auto-panel')) return;
+
         const panel = document.createElement('div');
         panel.id = 'faustus-auto-panel';
         panel.style.cssText = `
-            position: fixed;
-            top: 60px;
-            right: 20px;
-            z-index: 99999;
-            background: rgba(18, 18, 18, 0.94);
-            border: 2px solid #af8f42;
-            border-radius: 6px;
-            padding: 8px 14px;
-            color: #f1f1f1;
-            font-family: sans-serif;
-            font-size: 13px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            box-shadow: 0 4px 14px rgba(0,0,0,0.6);
-            cursor: pointer;
-            user-select: none;
+            position: fixed !important;
+            top: 70px !important;
+            right: 20px !important;
+            z-index: 2147483647 !important;
+            background: rgba(18, 18, 18, 0.95) !important;
+            border: 2px solid #af8f42 !important;
+            border-radius: 6px !important;
+            padding: 8px 14px !important;
+            color: #f1f1f1 !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+            font-size: 13px !important;
+            display: flex !important;
+            align-items: center !important;
+            gap: 12px !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.7) !important;
+            cursor: pointer !important;
+            user-select: none !important;
         `;
 
         function updateUI() {
@@ -91,8 +94,8 @@
             let statusColor = isEnabled ? (isTraveling ? '#f39c12' : '#2ecc71') : '#e74c3c';
 
             panel.innerHTML = `
-                <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${statusColor};"></span>
-                <strong>Auto-Travel:</strong> <span style="color:${statusColor}">${statusText}</span>
+                <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${statusColor}; box-shadow: 0 0 6px ${statusColor};"></span>
+                <strong>Auto-Travel:</strong> <span style="color:${statusColor}; font-weight:bold;">${statusText}</span>
             `;
         }
 
@@ -104,7 +107,16 @@
 
         window.updateFaustusUI = updateUI;
         updateUI();
-        document.body.appendChild(panel);
+
+        if (document.body) {
+            document.body.appendChild(panel);
+            console.log('[FaustusAutoBuyer] Плавающий виджет успешно добавлен на экран');
+        } else {
+            document.addEventListener('DOMContentLoaded', () => {
+                document.body.appendChild(panel);
+                console.log('[FaustusAutoBuyer] Плавающий виджет добавлен после DOMContentLoaded');
+            });
+        }
     }
 
     // Извлечение имени предмета из строки/карточки лота
@@ -141,6 +153,7 @@
 
         if (typeof GM_setClipboard === 'function') {
             GM_setClipboard(payload, 'text');
+            console.log(`[FaustusAutoBuyer] Скопировано в буфер через GM_setClipboard: '${payload}'`);
         } else if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(payload).catch(() => {});
         }
@@ -185,7 +198,7 @@
     }
 
     // Запуск слушателя
-    window.addEventListener('load', () => {
+    function start() {
         createFloatingToggle();
         setTimeout(() => {
             markExistingButtonsAsSeen();
@@ -199,8 +212,16 @@
                 }, 40);
             });
 
-            observer.observe(document.body, { childList: true, subtree: true });
-            console.log('[FaustusAutoBuyer] v1.4: Слушатель Live Search готов к работе!');
-        }, 1200);
-    });
+            if (document.body) {
+                observer.observe(document.body, { childList: true, subtree: true });
+            }
+            console.log('[FaustusAutoBuyer] v1.5: Слушатель Live Search готов к работе!');
+        }, 1000);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
 })();
