@@ -1,0 +1,20 @@
+## Visual Studio / Rider / VS Code cache
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Build results
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+
+## Publish / NuGet
+*.nupkg
+*.snupkg
+packages/
+project.lock.json
+project.assets.json
